@@ -1,0 +1,169 @@
+# First basic command of learning every programming language
+
+>>> print("Hello, World!")
+Hello, World!
+
+# Different type of numbers
+
+>>> x = 1    # int
+>>> y = 2.8  # float
+>>> z = 1j   # complex
+>>> print(type(x))
+<class 'int'>
+>>> print(type(y))
+<class 'float'>
+>>> print(type(z))
+<class 'complex'>
+>>> 
+
+# List 
+
+>>> thislist = ["apple", "banana", "cherry"]
+>>> print(thislist)
+['apple', 'banana', 'cherry']
+
+# Python Comments
+
+>>> # This is a comment
+>>> print("Hello")  # This is an inline comment
+Hello
+
+# Python Variables
+
+>>> x = 5
+>>> y = "Naman"
+>>> print(x)
+5
+>>> print(y)
+John
+>>> x, y, z = "Naman", "Nishchay", "Ananya"
+>>> print(x, y, z)
+Orange Banana Cherry
+
+# Python Data Types
+
+>>> x = 5
+>>> print(type(x))
+<class 'int'>
+>>> x = "Hello"
+>>> print(type(x))
+<class 'str'>
+>>> x = True
+>>> print(type(x))
+<class 'bool'>
+>>> x = [1, 2, 3]
+>>> print(type(x))
+<class 'list'>
+
+# Python Casting
+
+>>> x = int(1)
+>>> y = int(2.8)
+>>> z = int("3")
+>>> print(x, y, z)
+1 2 3
+>>> a = str(5)
+>>> print(type(a))
+<class 'str'>
+
+# Python Strings
+
+>>> a = "Hello, World!"
+>>> print(a[1])
+e
+>>> print(a[2:5])
+llo
+>>> print(len(a))
+13
+>>> print(a.upper())
+HELLO, WORLD!
+>>> print(a.lower())
+hello, world!
+>>> print(a.strip())
+Hello, World!
+>>> print(a.replace("H", "J"))
+Jello, World!
+>>> print(a.split(","))
+['Hello', ' World!']
+
+# Python Booleans
+
+>>> print(10 > 9)
+True
+>>> print(10 == 9)
+False
+>>> print(bool("Hello"))
+True
+>>> print(bool(0))
+False
+
+# Python Operators
+
+>>> print(10 + 5)
+15
+>>> print(10 % 3)
+1
+>>> print(10 ** 2)
+100
+>>> print(10 // 3)
+3
+>>> x = 5
+>>> x += 3
+>>> print(x)
+8
+>>> print(5 == 5 and 3 > 1)
+True
+>>> print(5 == 5 or 3 < 1)
+True
+
+# Python Tuples
+
+>>> thistuple = ("apple", "banana", "cherry")
+>>> print(thistuple)
+('apple', 'banana', 'cherry')
+>>> print(thistuple[1])
+banana
+
+# Python Sets
+
+>>> thisset = {"apple", "banana", "cherry"}
+>>> print(thisset)
+{'banana', 'cherry', 'apple'}
+>>> thisset.add("orange")
+>>> print(thisset)
+{'banana', 'cherry', 'apple', 'orange'}
+
+# Python Dictionaries
+
+>>> thisdict = {
+...   "brand": "Ford",
+...   "model": "Mustang",
+...   "year": 1964
+... }
+>>> print(thisdict)
+{'brand': 'Ford', 'model': 'Mustang', 'year': 1964}
+>>> print(thisdict["brand"])
+Ford
+
+# Python If...Else
+
+>>> a = 33
+>>> b = 200
+>>> if b > a:
+...     print("b is greater than a")
+...
+b is greater than a
+>>> a = 200
+>>> b = 33
+>>> if b > a:
+...     print("b is greater than a")
+... elif a == b:
+...     print("a and b are equal")
+... else:
+...     print("a is greater than b")
+...
+a is greater than b
+>>> a = 200
+>>> b = 33
+>>> print("A") if a > b else print("B")
+A
