@@ -1,0 +1,42 @@
+services:
+  # QueryPilot's own database: connections, schema embeddings, chat history, memory, evals.
+  app-db:
+    image: pgvector/pgvector:pg16
+    container_name: querypilot-app-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: querypilot
+    ports:
+      - "5434:5432"
+    volumes:
+      - appdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d querypilot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Sample "target" database to point QueryPilot at (Pagila: DVD rental store).
+  sample-db:
+    build: ./sample-db
+    container_name: querypilot-sample-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: pagila
+    ports:
+      - "5435:5432"
+    volumes:
+      - sampledata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pagila"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  appdata:
+  sampledata:

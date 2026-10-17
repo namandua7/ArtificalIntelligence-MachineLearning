@@ -1,0 +1,69 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 9 9 11;
+  --panel: 17 17 21;
+  --elevated: 26 26 32;
+  --border: 39 39 46;
+  --fg: 244 244 245;
+  --muted: 148 148 160;
+  --accent: 139 92 246;
+  --accent-2: 34 211 238;
+  --ok: 52 211 153;
+  --warn: 251 191 36;
+  --danger: 248 113 113;
+  color-scheme: dark;
+}
+
+html,
+body {
+  background: rgb(var(--bg));
+  color: rgb(var(--fg));
+}
+
+body {
+  background-image:
+    radial-gradient(60rem 30rem at 15% -10%, rgb(var(--accent) / 0.12), transparent 60%),
+    radial-gradient(50rem 25rem at 100% 0%, rgb(var(--accent-2) / 0.07), transparent 60%);
+  background-attachment: fixed;
+}
+
+::selection {
+  background: rgb(var(--accent) / 0.35);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--border)) transparent;
+}
+
+@layer components {
+  .glass {
+    @apply border border-border/70 bg-panel/70 backdrop-blur-xl;
+  }
+  .gradient-text {
+    @apply bg-gradient-to-r from-accent via-fuchsia-400 to-accent-2 bg-clip-text text-transparent;
+  }
+  .grid-bg {
+    background-image:
+      linear-gradient(rgb(var(--border) / 0.35) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(var(--border) / 0.35) 1px, transparent 1px);
+    background-size: 28px 28px;
+  }
+}
+
+/* Markdown inside assistant answers */
+.prose-qp p { @apply my-1.5 leading-relaxed; }
+.prose-qp ul { @apply my-1.5 list-disc pl-5; }
+.prose-qp ol { @apply my-1.5 list-decimal pl-5; }
+.prose-qp code { @apply rounded bg-elevated px-1 py-0.5 font-mono text-[0.85em] text-accent-2; }
+.prose-qp strong { @apply font-semibold text-fg; }
+.prose-qp a { @apply text-accent underline-offset-2 hover:underline; }
+
+/* React Flow dark theme tweaks */
+.react-flow__attribution { display: none; }
+.react-flow .react-flow__controls { @apply overflow-hidden rounded-lg border border-border !shadow-none; }
+.react-flow .react-flow__controls-button { @apply !border-border !bg-panel !fill-fg !text-fg hover:!bg-elevated; }
+.react-flow__minimap { @apply rounded-lg border border-border; background: rgb(var(--panel)) !important; }
