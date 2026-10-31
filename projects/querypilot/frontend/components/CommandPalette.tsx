@@ -3,6 +3,7 @@
 import { Command } from "cmdk";
 import {
   BookMarked,
+  BookText,
   Database,
   FlaskConical,
   Gauge,
@@ -111,6 +112,7 @@ export function CommandPalette() {
             <Item icon={<Network className="h-4 w-4" />} onSelect={() => go(`${base}/schema`)}>Schema diagram</Item>
             <Item icon={<SquareTerminal className="h-4 w-4" />} onSelect={() => go(`${base}/editor`)}>SQL editor</Item>
             <Item icon={<Gauge className="h-4 w-4" />} onSelect={() => go(`${base}/doctor`)}>Performance doctor</Item>
+            <Item icon={<BookText className="h-4 w-4" />} onSelect={() => go(`${base}/glossary`)}>Glossary</Item>
             <Item icon={<BookMarked className="h-4 w-4" />} onSelect={() => go(`${base}/memory`)}>Memory</Item>
             <Item icon={<FlaskConical className="h-4 w-4" />} onSelect={() => go(`${base}/evals`)}>Evals</Item>
           </Command.Group>

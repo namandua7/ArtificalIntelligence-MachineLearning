@@ -122,7 +122,17 @@ def ask_database(connection_id: int, question: str) -> dict[str, Any]:
                 out["truncated"] = event.data["truncated"] or event.data["rowCount"] > MAX_ROWS_TO_CLIENT
             elif event.event == "answer":
                 out.update(sql=event.data["sql"], explanation=event.data["explanation"],
-                           attempts=event.data["attempts"])
+                           attempts=event.data["attempts"], timing=event.data.get("timing"))
+                if event.data.get("confidence"):
+                    out["confidence"] = {k: event.data["confidence"][k] for k in ("level", "agreeing", "total")}
+                if event.data.get("analyses"):
+                    out["analyses"] = [
+                        {"code": a["code"], "stdout": a["stdout"], "value": a["value"], "table": a["table"],
+                         "error": a["error"]}
+                        for a in event.data["analyses"]
+                    ]
+                if event.data.get("drivers"):
+                    out["drivers"] = event.data["drivers"]
             elif event.event == "error":
                 out["error"] = event.data["message"]
         return out

@@ -319,3 +319,54 @@ def sample_rows(url: str, qualified_table: str, limit: int = 3) -> QueryResult:
     schema, _, name = qualified_table.rpartition(".")
     ident = f'"{schema}"."{name}"' if schema else f'"{name}"'
     return run_select(url, f"SELECT * FROM {ident} LIMIT {int(limit)}")
+
+
+# --- Value profiling ---------------------------------------------------------------------------
+
+_STATS_SQL = """
+SELECT schemaname, tablename, attname, n_distinct
+FROM pg_stats
+WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
+"""
+
+
+def _ident(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _table_ident(qualified: str) -> str:
+    schema, _, name = qualified.rpartition(".")
+    return f"{_ident(schema)}.{_ident(name)}" if schema else _ident(name)
+
+
+def column_distinct_estimates(url: str) -> dict[tuple[str, str, str], float]:
+    """(schema, table, column) → planner's n_distinct estimate. Empty if the DB was never ANALYZEd."""
+    with _ReadOnlyCursor(url, timeout_ms=15_000) as cur:
+        cur.execute(_STATS_SQL)
+        return {(s, t, c): float(n) for s, t, c, n in cur.fetchall()}
+
+
+def distinct_values(url: str, qualified_table: str, column: str, limit: int, timeout_ms: int = 3000) -> list[str]:
+    """Most frequent distinct non-null values of one column, as text (at most `limit`)."""
+    sql = (
+        f"SELECT {_ident(column)}::text AS v FROM {_table_ident(qualified_table)} "
+        f"WHERE {_ident(column)} IS NOT NULL GROUP BY 1 ORDER BY count(*) DESC, 1 LIMIT {int(limit)}"
+    )
+    guarded = guard_select(sql, limit)
+    with _ReadOnlyCursor(url, timeout_ms=timeout_ms) as cur:
+        cur.execute(guarded.sql)
+        return [row[0] for row in cur.fetchall()]
+
+
+def find_values(url: str, qualified_table: str, column: str, search: str | None, limit: int = 25) -> list[str]:
+    """Distinct values of a column matching a fuzzy search ('sci fi' finds 'Sci-Fi')."""
+    where = f"{_ident(column)} IS NOT NULL"
+    words = [w for w in "".join(ch if ch.isalnum() else " " for ch in (search or "")).split() if w]
+    if words:
+        pattern = "%" + "%".join(words) + "%"
+        where += f" AND {_ident(column)}::text ILIKE '{pattern.replace(chr(39), chr(39) * 2)}'"
+    sql = (
+        f"SELECT {_ident(column)}::text FROM {_table_ident(qualified_table)} WHERE {where} "
+        f"GROUP BY 1 ORDER BY count(*) DESC, 1 LIMIT {int(limit)}"
+    )
+    return [row[0] for row in run_select(url, sql, max_rows=limit).rows]

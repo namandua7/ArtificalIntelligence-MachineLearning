@@ -5,6 +5,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { AgentTimeline } from "@/components/AgentTimeline";
+import { AnalysisCard, ConfidenceBadge, DriversPanel, InsightsPanel, TimingBreakdown } from "@/components/AnswerExtras";
 import { Logo } from "@/components/Logo";
 import { Markdown } from "@/components/Markdown";
 import { ResultView } from "@/components/ResultView";
@@ -30,6 +31,7 @@ export function AssistantMessage({
   payload,
   streaming = false,
   status,
+  onAsk,
 }: {
   connectionId: number;
   messageId?: number;
@@ -37,6 +39,7 @@ export function AssistantMessage({
   payload: AssistantPayload;
   streaming?: boolean;
   status?: string;
+  onAsk?: (question: string) => void;
 }) {
   const [feedback, setFeedback] = useState(payload.feedback);
   const [sending, setSending] = useState(false);
@@ -85,10 +88,21 @@ export function AssistantMessage({
 
         {content && <Markdown>{content}</Markdown>}
 
+        {payload.confidence && <ConfidenceBadge confidence={payload.confidence} connectionId={connectionId} />}
+
         {payload.sql && <SqlCode sql={payload.sql} connectionId={connectionId} />}
 
         {payload.result && (
           <ResultView result={payload.result} chart={payload.chart} tableClassName="max-h-80" />
+        )}
+
+        {payload.drivers?.map((d, i) => <DriversPanel key={i} drivers={d} />)}
+        {payload.analyses?.map((a, i) => <AnalysisCard key={i} analysis={a} />)}
+
+        {!streaming && payload.timing && <TimingBreakdown timing={payload.timing} cached={payload.cached} />}
+
+        {!streaming && messageId && payload.result && payload.result.rows.length > 0 && (
+          <InsightsPanel messageId={messageId} initial={payload.insights} onAsk={onAsk} />
         )}
 
         {!streaming && messageId && payload.sql && (

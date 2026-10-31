@@ -2,6 +2,7 @@
 
 import {
   BookMarked,
+  BookText,
   ChevronLeft,
   Database,
   FlaskConical,
@@ -27,6 +28,7 @@ const NAV = [
   { href: "schema", label: "Schema", icon: Network },
   { href: "editor", label: "SQL Editor", icon: SquareTerminal },
   { href: "doctor", label: "Doctor", icon: Gauge },
+  { href: "glossary", label: "Glossary", icon: BookText },
   { href: "memory", label: "Memory", icon: BookMarked },
   { href: "evals", label: "Evals", icon: FlaskConical },
 ];

@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 
 from app.models import SavedQuery
+from app.services import cache
 from app.services.embeddings import embed_texts
 from app.services.sql_guard import format_sql
 
@@ -14,9 +15,11 @@ def save_query(db: Session, connection_id: int, question: str, sql: str, verifie
     db.add(saved)
     db.commit()
     db.refresh(saved)
+    cache.bump(connection_id)
     return saved
 
 
 def update_question(db: Session, saved: SavedQuery, question: str) -> None:
     [saved.embedding] = embed_texts([question], input_type="query")
     saved.question = question
+    cache.bump(saved.connection_id)

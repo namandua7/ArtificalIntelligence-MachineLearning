@@ -9,16 +9,17 @@ import re
 from dataclasses import dataclass, field
 
 from sqlalchemy import Float, cast, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from app.models import SavedQuery, SchemaRelation, SchemaTable
 from app.services.embeddings import embed_query
+from app.services.glossary import RetrievedTerm, match_terms
 
-TOP_K = 6
-MAX_TABLES = 10
+TOP_K = 4  # fewer tables = fewer prompt tokens; FK expansion below adds the join tables
+MAX_TABLES = 7
 RRF_K = 60
 CANDIDATES = 20
-EXAMPLES_K = 3
+EXAMPLES_K = 2
 EXAMPLE_MIN_SIMILARITY = 0.55
 
 _WORD = re.compile(r"[a-zA-Z][a-zA-Z0-9]{1,}")
@@ -43,6 +44,7 @@ class RetrievalResult:
     tables: list[RetrievedTable] = field(default_factory=list)
     examples: list[RetrievedExample] = field(default_factory=list)
     relations: list[SchemaRelation] = field(default_factory=list)
+    terms: list[RetrievedTerm] = field(default_factory=list)
 
     def summary(self) -> dict:
         return {
@@ -53,6 +55,7 @@ class RetrievalResult:
             "examples": [
                 {"question": e.question, "similarity": round(e.similarity, 3)} for e in self.examples
             ],
+            "terms": [t.summary() for t in self.terms],
         }
 
 
@@ -97,15 +100,13 @@ def retrieve_tables(
             scores[table_id] = scores.get(table_id, 0.0) + 1.0 / (RRF_K + rank + 1)
 
     top_ids = [tid for tid, _ in sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:TOP_K]]
-    all_tables = {
-        t.id: t for t in db.scalars(select(SchemaTable).where(SchemaTable.connection_id == connection_id))
-    }
-    by_name = {t.table_name: t for t in all_tables.values()}
+    # Only ids and names for the whole catalog: loading every row would drag every embedding
+    # (768 floats each) and summary across the wire on each question.
+    names = dict(db.execute(select(SchemaTable.id, SchemaTable.table_name).where(SchemaTable.connection_id == connection_id)).all())
+    id_by_name = {name: tid for tid, name in names.items()}
 
-    picked: list[RetrievedTable] = [
-        RetrievedTable(all_tables[tid], scores[tid], "match") for tid in top_ids if tid in all_tables
-    ]
-    picked_scores = {p.table.table_name: p.score for p in picked}
+    picked: list[tuple[int, float, str]] = [(tid, scores[tid], "match") for tid in top_ids if tid in names]
+    picked_scores = {names[tid]: score for tid, score, _ in picked}
     picked_names = set(picked_scores)
 
     relations = list(
@@ -116,18 +117,27 @@ def retrieve_tables(
     neighbour_hits: dict[str, float] = {}
     for rel in relations:
         for here, there in ((rel.from_table, rel.to_table), (rel.to_table, rel.from_table)):
-            if here in picked_scores and there not in picked_names and there in by_name:
+            if here in picked_scores and there not in picked_names and there in id_by_name:
                 neighbour_hits[there] = neighbour_hits.get(there, 0.0) + picked_scores[here]
     for name, score in sorted(neighbour_hits.items(), key=lambda kv: kv[1], reverse=True):
         if len(picked) >= MAX_TABLES:
             break
-        picked.append(RetrievedTable(by_name[name], score / 2, "join"))
+        picked.append((id_by_name[name], score / 2, "join"))
         picked_names.add(name)
 
+    rows = {
+        t.id: t
+        for t in db.scalars(
+            select(SchemaTable)
+            .where(SchemaTable.id.in_([tid for tid, _, _ in picked]))
+            .options(defer(SchemaTable.embedding), defer(SchemaTable.tsv))
+        )
+    }
+    result = [RetrievedTable(rows[tid], score, reason) for tid, score, reason in picked if tid in rows]
     used_relations = [
         r for r in relations if r.from_table in picked_names and r.to_table in picked_names
     ]
-    return picked, used_relations
+    return result, used_relations
 
 
 def retrieve_examples(
@@ -154,4 +164,5 @@ def retrieve(
     query_vec = embed_query(question)
     tables, relations = retrieve_tables(db, connection_id, question, query_vec)
     examples = retrieve_examples(db, connection_id, query_vec) if use_memory else []
-    return RetrievalResult(tables=tables, examples=examples, relations=relations)
+    terms = match_terms(db, connection_id, question, query_vec)
+    return RetrievalResult(tables=tables, examples=examples, relations=relations, terms=terms)

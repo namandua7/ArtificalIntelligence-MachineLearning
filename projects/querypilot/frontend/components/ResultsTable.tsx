@@ -10,7 +10,7 @@ import {
   type SortingState,
 } from "@tanstack/react-table";
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, memo } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -25,7 +25,7 @@ function Cell({ value }: { value: unknown }) {
   return <span title={s.length > 60 ? s : undefined}>{s.length > 80 ? `${s.slice(0, 80)}…` : s}</span>;
 }
 
-export function ResultsTable({
+function ResultsTableImpl({
   columns,
   rows,
   pageSize = 50,
@@ -140,3 +140,5 @@ export function ResultsTable({
     </div>
   );
 }
+
+export const ResultsTable = memo(ResultsTableImpl);

@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { ArrowUp, MessageSquare, PanelLeft, Plus, Sparkles, Square, Trash2 } from "lucide-react";
+import { ArrowUp, MessageSquare, PanelLeft, Plus, ShieldCheck, Sparkles, Square, Trash2 } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -50,7 +50,7 @@ function upsertStep(steps: AgentStep[], step: AgentStep): AgentStep[] {
 function AskInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { connectionId, schema, conversationsVersion, bumpConversations } = useWorkspace();
+  const { connectionId, schema, meta, conversationsVersion, bumpConversations } = useWorkspace();
 
   const [conversations, setConversations] = useState<Conversation[] | null>(null);
   const [conversationId, setConversationId] = useState<number | null>(null);
@@ -59,6 +59,9 @@ function AskInner() {
   const [live, setLive] = useState<LiveTurn | null>(null);
   const [input, setInput] = useState("");
   const [showList, setShowList] = useState(true);
+  // Cross-check answers with independent attempts. Default on for fast hosted models, off for local ones.
+  const [verify, setVerify] = useState<boolean | null>(null);
+  const verifyOn = verify ?? meta?.llm.provider === "gemini";
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -111,6 +114,7 @@ function AskInner() {
       setLive({ question, status: "Starting…", content: "", payload: { steps: [] } });
 
       const patch = (fn: (t: LiveTurn) => LiveTurn) => setLive((t) => (t ? fn(t) : t));
+      const sendVerify = verifyOn;
 
       await streamChat(
         connectionId,
@@ -135,15 +139,29 @@ function AskInner() {
             })),
           onStepResult: (d) => patch((t) => ({ ...t, payload: { ...t.payload, steps: upsertStep(t.payload.steps ?? [], d) } })),
           onResult: (d) => patch((t) => ({ ...t, payload: { ...t.payload, result: d } })),
+          onAnalysis: (d) =>
+            patch((t) => ({ ...t, payload: { ...t.payload, analyses: [...(t.payload.analyses ?? []), d] } })),
+          onDrivers: (d) =>
+            patch((t) => ({ ...t, payload: { ...t.payload, drivers: [...(t.payload.drivers ?? []), d] } })),
+          onConfidence: (d) => patch((t) => ({ ...t, payload: { ...t.payload, confidence: d } })),
           onAnswer: (d) =>
             patch((t) => ({
               ...t,
               content: d.explanation,
-              payload: { ...t.payload, sql: d.sql, chart: d.chart, steps: d.steps, attempts: d.attempts },
+              payload: {
+                ...t.payload,
+                sql: d.sql,
+                chart: d.chart,
+                steps: d.steps,
+                attempts: d.attempts,
+                timing: d.timing,
+                cached: d.cached,
+              },
             })),
           onError: (d) => patch((t) => ({ ...t, payload: { ...t.payload, error: d.message } })),
         },
-        controller.signal
+        controller.signal,
+        sendVerify
       );
 
       // Swap the live turn for the persisted messages (keeps ids for feedback).
@@ -159,7 +177,7 @@ function AskInner() {
       }
       setLive((t) => (t ? { ...t, status: "" } : t));
     },
-    [connectionId, conversationId, live, bumpConversations]
+    [connectionId, conversationId, live, bumpConversations, verifyOn]
   );
 
   // ?q=<question> (from the command palette) starts a new chat with that question
@@ -307,6 +325,7 @@ function AskInner() {
                   messageId={m.id}
                   content={m.content}
                   payload={m.payload ?? {}}
+                  onAsk={(q) => send(q)}
                 />
               )
             )}
@@ -336,6 +355,22 @@ function AskInner() {
             }}
             className="mx-auto flex max-w-4xl items-end gap-2 rounded-2xl border border-border bg-panel/80 p-2 shadow-lg shadow-black/20 focus-within:border-accent/50 focus-within:ring-2 focus-within:ring-accent/15"
           >
+            <button
+              type="button"
+              onClick={() => setVerify(!verifyOn)}
+              title={
+                verifyOn
+                  ? "Cross-check ON: independent attempts must agree (slower, more reliable)"
+                  : "Cross-check OFF: faster. Click to verify answers with independent attempts"
+              }
+              className={cn(
+                "flex h-9 shrink-0 items-center gap-1.5 rounded-xl border px-2.5 text-xs transition",
+                verifyOn ? "border-ok/40 bg-ok/10 text-ok" : "border-border text-muted hover:text-fg"
+              )}
+            >
+              <ShieldCheck className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Verify</span>
+            </button>
             <textarea
               ref={textareaRef}
               value={input}

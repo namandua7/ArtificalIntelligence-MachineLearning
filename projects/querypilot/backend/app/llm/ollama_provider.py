@@ -4,15 +4,18 @@ from typing import Any
 
 import ollama
 
+from app.config import settings
 from app.llm.base import (
     AgentMessage,
     LLMError,
+    LLMOutputError,
     LLMProvider,
     LLMTurn,
     RetryCallback,
     T,
     ToolCall,
     ToolSpec,
+    record_usage,
 )
 
 
@@ -25,6 +28,21 @@ class OllamaProvider(LLMProvider):
     def __init__(self, host: str, model: str):
         self.model = model
         self.client = ollama.Client(host=host)
+
+    @staticmethod
+    def _options(temperature: float) -> dict[str, Any]:
+        return {"temperature": temperature, "num_ctx": settings.ollama_num_ctx}
+
+    def warm(self) -> None:
+        try:
+            self.client.chat(
+                model=self.model,
+                messages=[{"role": "user", "content": "hi"}],
+                options={"num_predict": 1, "num_ctx": settings.ollama_num_ctx},
+                keep_alive=settings.ollama_keep_alive,
+            )
+        except Exception:  # noqa: BLE001 — warming is best-effort
+            pass
 
     @staticmethod
     def _to_messages(system: str, messages: list[AgentMessage]) -> list[dict[str, Any]]:
@@ -67,11 +85,13 @@ class OllamaProvider(LLMProvider):
                     }
                     for t in tools
                 ],
-                options={"temperature": 0.1},
+                options=self._options(0.1),
+                keep_alive=settings.ollama_keep_alive,
             )
         except (ollama.ResponseError, ConnectionError) as exc:
             raise LLMError(f"Ollama error: {exc}") from exc
 
+        record_usage(response.prompt_eval_count, response.eval_count)
         calls = []
         for tc in response.message.tool_calls or []:
             args = tc.function.arguments
@@ -89,17 +109,20 @@ class OllamaProvider(LLMProvider):
         prompt: str,
         schema: type[T],
         on_retry: RetryCallback | None = None,
+        temperature: float | None = None,
     ) -> T:
         try:
             response = self.client.chat(
                 model=self.model,
                 messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
                 format=schema.model_json_schema(),
-                options={"temperature": 0.2},
+                options=self._options(0.2 if temperature is None else temperature),
+                keep_alive=settings.ollama_keep_alive,
             )
         except (ollama.ResponseError, ConnectionError) as exc:
             raise LLMError(f"Ollama error: {exc}") from exc
+        record_usage(response.prompt_eval_count, response.eval_count)
         try:
             return schema.model_validate_json(response.message.content or "")
         except ValueError as exc:
-            raise LLMError(f"Ollama returned output that doesn't match the schema: {exc}") from exc
+            raise LLMOutputError(f"Ollama returned output that doesn't match the schema: {exc}") from exc

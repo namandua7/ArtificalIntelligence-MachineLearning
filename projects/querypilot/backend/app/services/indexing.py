@@ -9,15 +9,16 @@ from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models import Connection, SchemaRelation, SchemaTable
-from app.services import crypto, target
+from app.services import cache, crypto, target
 from app.services.embeddings import embed_texts
+from app.services.profiling import profile_tables
 
 logger = logging.getLogger(__name__)
 
 EMBED_BATCH = 32
 
 
-def _column_line(col: dict) -> str:
+def _column_line(col: dict, values: list[str] | None = None) -> str:
     parts = [col["name"], col["type"]]
     if col["pk"]:
         parts.append("PK")
@@ -25,11 +26,13 @@ def _column_line(col: dict) -> str:
         parts.append(f"→ {col['fk']}")
     if col.get("comment"):
         parts.append(f"-- {col['comment']}")
+    if values:
+        parts.append(f"[values: {', '.join(values)}]")
     return " ".join(parts)
 
 
 def build_summary(
-    table: target.IntrospectedTable, referenced_by: list[str]
+    table: target.IntrospectedTable, referenced_by: list[str], profiles: dict[str, list[str]] | None = None
 ) -> str:
     """The text the LLM sees for this table, and the text that gets embedded."""
     header = f"{table.kind.capitalize()} {table.qualified}"
@@ -39,16 +42,19 @@ def build_summary(
     if table.comment:
         lines.append(f"Description: {table.comment}")
     lines.append("Columns:")
-    lines.extend(f"  - {_column_line(c)}" for c in table.columns)
+    profiles = profiles or {}
+    lines.extend(f"  - {_column_line(c, profiles.get(c['name']))}" for c in table.columns)
     if referenced_by:
         lines.append("Referenced by: " + ", ".join(sorted(referenced_by)))
     return "\n".join(lines)
 
 
-def _keyword_doc(table: target.IntrospectedTable) -> str:
+def _keyword_doc(table: target.IntrospectedTable, profiles: dict[str, list[str]] | None = None) -> str:
     words = [table.name, *(c["name"] for c in table.columns)]
     if table.comment:
         words.append(table.comment)
+    for values in (profiles or {}).values():
+        words.extend(values)
     return " ".join(words).replace("_", " ")
 
 
@@ -60,7 +66,8 @@ def reindex_connection(db: Session, connection: Connection) -> None:
     for rel in relations:
         referenced_by[rel.to_table].append(f"{rel.from_table}.{rel.from_column}")
 
-    summaries = [build_summary(t, referenced_by[t.qualified]) for t in tables]
+    profiles = profile_tables(url, tables)
+    summaries = [build_summary(t, referenced_by[t.qualified], profiles.get(t.qualified)) for t in tables]
     embeddings: list[list[float]] = []
     for i in range(0, len(summaries), EMBED_BATCH):
         embeddings.extend(embed_texts(summaries[i : i + EMBED_BATCH], input_type="document"))
@@ -78,8 +85,9 @@ def reindex_connection(db: Session, connection: Connection) -> None:
                 row_estimate=table.row_estimate,
                 columns=table.columns,
                 summary_text=summary,
+                value_profiles=profiles.get(table.qualified, {}),
                 embedding=embedding,
-                tsv=func.to_tsvector("english", _keyword_doc(table)),
+                tsv=func.to_tsvector("english", _keyword_doc(table, profiles.get(table.qualified))),
             )
         )
     for rel in relations:
@@ -98,6 +106,7 @@ def reindex_connection(db: Session, connection: Connection) -> None:
     connection.index_error = None
     connection.last_indexed_at = datetime.now(timezone.utc)
     db.commit()
+    cache.bump(connection.id)
 
 
 def reindex_connection_background(connection_id: int) -> None:

@@ -13,6 +13,14 @@ diagnoses slow queries, learns from 👍 feedback, measures its own accuracy, an
 | **RAG & vector DB** | `backend/app/services/retrieval.py`: pgvector + Postgres full-text, fused with Reciprocal Rank Fusion, then foreign-key graph expansion; verified examples retrieved as few-shot memory |
 | **MCP** | `backend/app/mcp_server.py`: `list_connections`, `get_schema`, `ask_database`, `run_readonly_sql`, `analyze_query_performance` |
 | **AI automation** | Evals (`backend/app/evals/`): execution-accuracy suite, run from UI or CLI, tracked over time |
+| **Semantic layer** | Glossary page + `services/glossary.py`: business terms (with aliases and canonical SQL) matched literally and by embedding, injected as authoritative definitions |
+| **Value-aware retrieval** | `services/profiling.py`: distinct values of low-cardinality columns are indexed with each table, plus a `find_values` tool, so "PG13" or "sci fi" resolve to the stored spelling |
+| **Self-consistency** | `services/consistency.py`: independent candidate queries must return the same values; the UI shows a confidence badge and the alternative readings |
+| **Root-cause analysis** | `analyze_drivers` tool + `services/drivers.py`: "why did revenue drop?" is split into per-segment contributions, computed deterministically |
+| **Python analysis** | `run_python` tool: pandas/numpy on a result (correlation, growth, forecasts, cohorts) in a sandboxed subprocess |
+| **Insights** | `services/insights.py`: computed key facts, plain-English takeaways and clickable follow-up questions |
+| **Latency** | per-step timing breakdown, answer cache, embedding cache, model warm-up and `keep_alive` |
+| **Eval gate** | difficulty/category/failure breakdowns, run-vs-run comparison, model comparison and a CI exit code (`python -m app.evals.run --help`) |
 
 ## Architecture
 

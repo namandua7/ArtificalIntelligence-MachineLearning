@@ -16,7 +16,9 @@ from app.schemas import (
     ConversationOut,
     FeedbackRequest,
     FeedbackResult,
+    InsightsOut,
 )
+from app.services import cache, insights
 from app.services.agent import HistoryTurn, run_agent
 from app.services.memory import save_query
 
@@ -45,7 +47,9 @@ def _history(conversation: Conversation, before_id: int) -> list[HistoryTurn]:
     return turns[-HISTORY_TURNS:]
 
 
-def _stream(connection_id: int, conversation_id: int, user_message_id: int, assistant_id: int) -> Generator[str, None, None]:
+def _stream(
+    connection_id: int, conversation_id: int, user_message_id: int, assistant_id: int, verify: bool | None = None
+) -> Generator[str, None, None]:
     # Own session: the request-scoped one may be closed before streaming finishes.
     db = SessionLocal()
     try:
@@ -57,16 +61,24 @@ def _stream(connection_id: int, conversation_id: int, user_message_id: int, assi
 
         payload: dict[str, Any] = {"steps": []}
         for ev in run_agent(
-            db, connection, user_msg.content, _history(conversation, user_message_id), message_id=assistant_id
+            db, connection, user_msg.content, _history(conversation, user_message_id),
+            message_id=assistant_id, verify=verify,
         ):
             yield _sse(ev.event, ev.data)
             if ev.event == "retrieval":
                 payload["retrieval"] = ev.data
             elif ev.event == "result":
                 payload["result"] = {**ev.data, "rows": ev.data["rows"][:STORED_ROWS]}
+            elif ev.event == "analysis":
+                payload.setdefault("analyses", []).append(ev.data)
+            elif ev.event == "drivers":
+                payload.setdefault("drivers", []).append(ev.data)
+            elif ev.event == "confidence":
+                payload["confidence"] = ev.data
             elif ev.event == "answer":
                 payload.update(sql=ev.data["sql"], chart=ev.data["chart"], steps=ev.data["steps"],
-                               attempts=ev.data["attempts"])
+                               attempts=ev.data["attempts"], timing=ev.data.get("timing"),
+                               cached=bool(ev.data.get("cached")))
                 assistant.content = ev.data["explanation"]
             elif ev.event == "error":
                 payload.update(error=ev.data["message"], steps=ev.data.get("steps", []))
@@ -110,7 +122,7 @@ def chat(
     db.commit()
 
     return StreamingResponse(
-        _stream(connection.id, conversation.id, user_msg.id, assistant.id),
+        _stream(connection.id, conversation.id, user_msg.id, assistant.id, body.verify),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -145,6 +157,31 @@ def delete_conversation(conversation_id: int, db: Session = Depends(get_db)) -> 
     db.commit()
 
 
+@router.post("/api/messages/{message_id}/insights", response_model=InsightsOut)
+def message_insights(message_id: int, refresh: bool = False, db: Session = Depends(get_db)) -> InsightsOut:
+    """Key facts (computed), plain-English takeaways and suggested follow-ups for an answer."""
+    assistant = db.get(Message, message_id)
+    if assistant is None or assistant.role != "assistant":
+        raise HTTPException(status_code=404, detail="Message not found")
+    payload = dict(assistant.payload or {})
+    result = payload.get("result")
+    if not result or not result.get("rows"):
+        raise HTTPException(status_code=400, detail="This answer has no result rows to analyse.")
+    if payload.get("insights") and not refresh and not payload["insights"].get("llmError"):
+        return InsightsOut.model_validate(payload["insights"])
+    question = db.scalar(
+        select(Message.content)
+        .where(Message.conversation_id == assistant.conversation_id, Message.id < assistant.id, Message.role == "user")
+        .order_by(Message.id.desc())
+        .limit(1)
+    ) or ""
+    out = insights.build(question, payload.get("sql") or "", result["columns"], result["rows"])
+    payload["insights"] = out
+    assistant.payload = payload
+    db.commit()
+    return InsightsOut.model_validate(out)
+
+
 @router.post("/api/messages/{message_id}/feedback", response_model=FeedbackResult)
 def feedback(message_id: int, body: FeedbackRequest, db: Session = Depends(get_db)) -> FeedbackResult:
     """👍 saves the question→SQL pair to memory (few-shot examples); 👎 removes it again."""
@@ -166,11 +203,12 @@ def feedback(message_id: int, body: FeedbackRequest, db: Session = Depends(get_d
         if not sql or not question:
             raise HTTPException(status_code=400, detail="This answer has no SQL to save.")
         if saved_id is None or db.get(SavedQuery, saved_id) is None:
-            saved_id = save_query(db, connection_id, question, sql).id
+            saved_id = save_query(db, connection_id, question, sql).id  # also bumps the answer cache
     elif saved_id is not None:
         saved = db.get(SavedQuery, saved_id)
         if saved is not None:
             db.delete(saved)
+            cache.bump(connection_id)
         saved_id = None
 
     payload.update(feedback="up" if body.verified else "down", savedQueryId=saved_id)

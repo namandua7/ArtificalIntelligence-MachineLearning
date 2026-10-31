@@ -114,6 +114,8 @@ class FixResult(CamelModel):
 class ChatRequest(CamelModel):
     question: str = Field(min_length=1, max_length=4000)
     conversation_id: int | None = None
+    # Cross-check the answer with independent attempts. None = server default (on for hosted models).
+    verify: bool | None = None
 
 
 class ConversationOut(CamelModel):
@@ -134,12 +136,38 @@ class ConversationDetail(ConversationOut):
     messages: list[MessageOut]
 
 
+class InsightsOut(CamelModel):
+    facts: list[str]
+    takeaways: list[str]
+    followups: list[str]
+    llm_error: str | None = None
+
+
 class FeedbackRequest(CamelModel):
     verified: bool
 
 
 class FeedbackResult(CamelModel):
     saved_query_id: int | None
+
+
+# --- Glossary ----------------------------------------------------------------------------------
+
+
+class GlossaryTermIn(CamelModel):
+    term: str = Field(min_length=1, max_length=120)
+    aliases: list[str] = Field(default_factory=list, max_length=12)
+    definition: str = Field(min_length=1, max_length=2000)
+    sql_snippet: str | None = Field(default=None, max_length=2000)
+
+
+class GlossaryTermOut(CamelModel):
+    id: int
+    term: str
+    aliases: list[str]
+    definition: str
+    sql_snippet: str | None
+    created_at: datetime
 
 
 # --- Doctor ------------------------------------------------------------------------------------
@@ -178,6 +206,10 @@ class SavedQueryOut(CamelModel):
 class EvalCreate(CamelModel):
     dataset: str = "pagila"
     use_memory: bool = True
+    verify: bool = False
+    # Chat model to evaluate (same provider as the server); None = the configured default.
+    model: str | None = Field(default=None, max_length=120)
+    label: str | None = Field(default=None, max_length=120)
 
 
 class EvalDataset(CamelModel):
@@ -194,6 +226,9 @@ class EvalResultOut(CamelModel):
     steps: int
     duration_ms: int
     error: str | None
+    difficulty: str | None = None
+    category: str | None = None
+    failure_type: str | None = None
 
 
 class EvalRunOut(CamelModel):
@@ -201,6 +236,8 @@ class EvalRunOut(CamelModel):
     dataset: str
     status: str
     use_memory: bool
+    verify: bool = False
+    label: str | None = None
     model: str
     total: int
     completed: int
@@ -212,3 +249,13 @@ class EvalRunOut(CamelModel):
 
 class EvalRunDetail(EvalRunOut):
     results: list[EvalResultOut]
+    breakdown: dict[str, Any] = Field(default_factory=dict)
+
+
+class EvalCompareOut(CamelModel):
+    a: EvalRunOut
+    b: EvalRunOut
+    items: list[dict[str, Any]]
+    summary: dict[str, int]
+    by_difficulty_a: dict[str, Any]
+    by_difficulty_b: dict[str, Any]

@@ -4,16 +4,20 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   CheckCircle2,
   ChevronDown,
+  BookText,
   CircleDashed,
+  Code2,
   FileSearch,
   Flag,
   Loader2,
   Play,
+  ListFilter,
   Search,
   Table2,
+  TrendingUp,
   XCircle,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, memo } from "react";
 
 import type { AgentStep, Retrieval } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -22,6 +26,9 @@ const TOOL_META: Record<string, { label: string; icon: typeof Search }> = {
   search_schema: { label: "Search schema", icon: Search },
   get_table_details: { label: "Inspect table", icon: Table2 },
   run_sql: { label: "Run SQL", icon: Play },
+  find_values: { label: "Look up values", icon: ListFilter },
+  analyze_drivers: { label: "Analyze drivers", icon: TrendingUp },
+  run_python: { label: "Python analysis", icon: Code2 },
   final_answer: { label: "Final answer", icon: Flag },
 };
 
@@ -29,11 +36,14 @@ function stepDetail(step: AgentStep): string {
   const a = step.args ?? {};
   if (step.tool === "search_schema") return String(a.query ?? "");
   if (step.tool === "get_table_details") return String(a.table ?? "");
+  if (step.tool === "find_values") return `${a.table ?? ""}.${a.column ?? ""}${a.search ? ` ~ "${a.search}"` : ""}`;
+  if (step.tool === "run_python") return String(a.code ?? "").split("\n")[0];
+  if (step.tool === "analyze_drivers") return String(a.sql ?? "").replace(/\s+/g, " ");
   if (step.tool === "run_sql" || step.tool === "final_answer") return String(a.sql ?? "").replace(/\s+/g, " ");
   return JSON.stringify(a);
 }
 
-export function AgentTimeline({
+function AgentTimelineImpl({
   retrieval,
   steps,
   status,
@@ -110,6 +120,27 @@ export function AgentTimeline({
                 </div>
               )}
 
+              {retrieval?.terms && retrieval.terms.length > 0 && (
+                <div className="flex gap-2.5">
+                  <BookText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warn" />
+                  <div className="min-w-0 text-xs">
+                    <div className="text-muted">Business definitions applied</div>
+                    <div className="mt-1.5 flex flex-wrap gap-1">
+                      {retrieval.terms.map((t) => (
+                        <span
+                          key={t.term}
+                          title={t.reason === "exact" ? "Term appears in the question" : "Matched by meaning"}
+                          className="rounded-md border border-warn/30 bg-warn/5 px-1.5 py-0.5 text-[10.5px] text-warn"
+                        >
+                          {t.term}
+                          {t.reason === "similar" && " ≈"}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {steps.map((step, i) => {
                 const meta = TOOL_META[step.tool] ?? { label: step.tool, icon: Play };
                 const pending = step.ok === undefined;
@@ -155,3 +186,5 @@ export function AgentTimeline({
     </div>
   );
 }
+
+export const AgentTimeline = memo(AgentTimelineImpl);

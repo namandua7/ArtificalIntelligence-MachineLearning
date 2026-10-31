@@ -12,3 +12,6 @@ google-genai==2.31.0
 sqlglot==30.23.0
 cryptography==50.0.2
 mcp==2.3.0
+pandas==3.1.0
+numpy==2.4.6
+pytest==9.2.0

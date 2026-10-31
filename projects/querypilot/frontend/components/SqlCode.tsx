@@ -2,7 +2,7 @@
 
 import { Check, Copy, SquareTerminal } from "lucide-react";
 import Link from "next/link";
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useMemo, useState, memo } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -30,7 +30,7 @@ function highlight(sql: string) {
   return out;
 }
 
-export function SqlCode({
+function SqlCodeImpl({
   sql,
   connectionId,
   className,
@@ -76,3 +76,5 @@ export function SqlCode({
     </div>
   );
 }
+
+export const SqlCode = memo(SqlCodeImpl);

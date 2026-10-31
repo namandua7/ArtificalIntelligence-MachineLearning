@@ -6,7 +6,7 @@ from app.database import get_db
 from app.models import Connection, SavedQuery
 from app.routers.deps import connection_url, get_ready_connection
 from app.schemas import SavedQueryCreate, SavedQueryOut, SavedQueryUpdate
-from app.services import target
+from app.services import cache, target
 from app.services.memory import save_query, update_question
 from app.services.sql_guard import format_sql
 
@@ -52,6 +52,7 @@ def update_saved(saved_id: int, body: SavedQueryUpdate, db: Session = Depends(ge
         saved.verified = body.verified
     db.commit()
     db.refresh(saved)
+    cache.bump(saved.connection_id)
     return saved
 
 
@@ -60,5 +61,7 @@ def delete_saved(saved_id: int, db: Session = Depends(get_db)) -> None:
     saved = db.get(SavedQuery, saved_id)
     if saved is None:
         raise HTTPException(status_code=404, detail="Saved query not found")
+    connection_id = saved.connection_id
     db.delete(saved)
     db.commit()
+    cache.bump(connection_id)

@@ -60,6 +60,9 @@ class SchemaTable(Base):
     # [{"name","type","nullable","pk","fk": "table.col" | null, "comment"}]
     columns: Mapped[list[dict]] = mapped_column(JSONB, nullable=False, default=list)
     summary_text: Mapped[str] = mapped_column(Text, nullable=False)
+    # {"column": ["value", ...]}: distinct values of low-cardinality text/enum/bool columns,
+    # collected at index time so "Sci-Fi" or "PG-13" resolves to the exact stored spelling.
+    value_profiles: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
     embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM), nullable=False)
     tsv: Mapped[str] = mapped_column(TSVECTOR, nullable=False)
 
@@ -161,6 +164,30 @@ class SavedQuery(Base):
     )
 
 
+class GlossaryTerm(Base):
+    """Semantic layer: a business term and how it maps to this database.
+
+    Injected into the agent prompt when a question mentions the term (or something close to it), so
+    "revenue" or "active customer" always means the same thing.
+    """
+
+    __tablename__ = "glossary_terms"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    connection_id: Mapped[int] = mapped_column(
+        ForeignKey("connections.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    term: Mapped[str] = mapped_column(String(120), nullable=False)
+    aliases: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
+    definition: Mapped[str] = mapped_column(Text, nullable=False)
+    # Optional canonical SQL: an expression, a filter, or a whole query shape.
+    sql_snippet: Mapped[str | None] = mapped_column(Text)
+    embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class EvalRun(Base):
     __tablename__ = "eval_runs"
 
@@ -172,6 +199,8 @@ class EvalRun(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")
     use_memory: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     model: Mapped[str] = mapped_column(String(120), nullable=False)
+    label: Mapped[str | None] = mapped_column(String(120))
+    verify: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     completed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     passed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -200,3 +229,7 @@ class EvalResult(Base):
     steps: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error: Mapped[str | None] = mapped_column(Text)
+    difficulty: Mapped[str | None] = mapped_column(String(20))
+    category: Mapped[str | None] = mapped_column(String(60))
+    # no_sql | blocked | sql_error | wrong_result | gold_error (None when passed)
+    failure_type: Mapped[str | None] = mapped_column(String(30))

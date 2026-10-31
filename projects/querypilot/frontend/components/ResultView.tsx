@@ -1,12 +1,19 @@
 "use client";
 
 import { AreaChart, BarChart3, Download, LineChart, PieChart, Table2 } from "lucide-react";
-import { useState } from "react";
+import dynamic from "next/dynamic";
+import { memo, useState } from "react";
 
-import { ResultChart, inferChart } from "@/components/ResultChart";
 import { ResultsTable } from "@/components/ResultsTable";
 import type { ChartSpec, QueryResult } from "@/lib/api";
+import { inferChart } from "@/lib/chart";
 import { cn, downloadCsv } from "@/lib/utils";
+
+// recharts is ~100 kB: only fetched when someone actually looks at a chart.
+const ResultChart = dynamic(() => import("@/components/ResultChart").then((m) => m.ResultChart), {
+  ssr: false,
+  loading: () => <div className="h-64 animate-pulse rounded-lg bg-elevated" />,
+});
 
 type View = "table" | ChartSpec["type"];
 
@@ -17,7 +24,7 @@ const CHART_BUTTONS: { type: Exclude<ChartSpec["type"], "none">; icon: typeof Ba
   { type: "pie", icon: PieChart },
 ];
 
-export function ResultView({
+function ResultViewImpl({
   result,
   chart,
   className,
@@ -78,3 +85,5 @@ export function ResultView({
     </div>
   );
 }
+
+export const ResultView = memo(ResultViewImpl);

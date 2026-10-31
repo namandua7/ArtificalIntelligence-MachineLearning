@@ -1,4 +1,5 @@
 import logging
+import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -10,9 +11,31 @@ from app.config import settings
 from app.database import SessionLocal
 from app.llm import describe_llm
 from app.models import Connection, EvalRun
-from app.routers import chat, connections, doctor, evals, memory, query, schema
+from app.routers import chat, connections, doctor, evals, glossary, memory, query, schema
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger("querypilot")
+
+
+def _warm_up() -> None:
+    """Load the embedding model, chat model and pandas now, so the first question isn't the slow one."""
+    import time
+
+    from app.llm import get_llm
+    from app.services import sandbox
+    from app.services.embeddings import embed_texts
+
+    started = time.perf_counter()
+    for name, task in (
+        ("embeddings", lambda: embed_texts(["warm up"], input_type="query")),
+        ("chat model", lambda: get_llm().warm()),
+        ("python sandbox", lambda: sandbox.run_python("result = 1", ["x"], [[1]])),
+    ):
+        try:
+            task()
+        except Exception as exc:  # noqa: BLE001 — warming must never stop the server
+            logger.warning("Warm-up of %s failed: %s", name, exc)
+    logger.info("Warm-up finished in %.1fs", time.perf_counter() - started)
 
 
 @asynccontextmanager
@@ -28,6 +51,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             .values(index_status="error", index_error="Indexing was interrupted by a server restart. Re-index to retry.")
         )
         db.commit()
+    if settings.warmup_models_on_start:
+        threading.Thread(target=_warm_up, name="warm-up", daemon=True).start()
     yield
 
 
@@ -41,7 +66,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for module in (connections, schema, query, chat, doctor, memory, evals):
+for module in (connections, schema, query, chat, doctor, memory, evals, glossary):
     app.include_router(module.router)
 
 SAMPLE_CONNECTION_URL = "postgresql://qp_readonly:readonly@localhost:5435/pagila"

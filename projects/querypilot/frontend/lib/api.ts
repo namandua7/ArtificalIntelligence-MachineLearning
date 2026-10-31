@@ -70,7 +70,80 @@ export type AgentStep = {
 export type Retrieval = {
   tables: { name: string; score: number; reason: "match" | "join" }[];
   examples: { question: string; similarity: number }[];
+  terms?: { term: string; reason: "exact" | "similar" }[];
+  durationMs?: number;
 };
+
+export type Timing = {
+  totalMs: number;
+  retrievalMs: number;
+  llmMs: number;
+  llmCalls: number;
+  sqlMs: number;
+  otherMs: number;
+  cachedMs?: number;
+};
+
+export type ConfidenceLevel = "high" | "medium" | "low" | "unverified";
+
+export type Confidence = {
+  level: ConfidenceLevel;
+  agreeing: number;
+  total: number;
+  attempted: number;
+  durationMs?: number;
+  alternatives: { sql: string; status: "agrees" | "differs" | "error"; rowCount: number | null; error: string | null }[];
+};
+
+export type TableData = { columns: string[]; rows: unknown[][]; rowCount: number; truncated: boolean };
+
+export type Analysis = {
+  code: string;
+  sql: string;
+  inputRows: number;
+  ok: boolean;
+  stdout: string;
+  error: string | null;
+  table: TableData | null;
+  value: unknown;
+  durationMs: number;
+};
+
+export type Driver = {
+  segment: string;
+  before: number;
+  after: number;
+  delta: number;
+  share: number | null;
+  pctChange: number | null;
+};
+
+export type Drivers = {
+  dimension: string;
+  metric: string;
+  periodBefore: string;
+  periodAfter: string;
+  totalBefore: number;
+  totalAfter: number;
+  delta: number;
+  pctChange: number | null;
+  segmentCount: number;
+  drivers: Driver[];
+  sql: string;
+};
+
+export type Insights = { facts: string[]; takeaways: string[]; followups: string[]; llmError: string | null };
+
+export type GlossaryTerm = {
+  id: number;
+  term: string;
+  aliases: string[];
+  definition: string;
+  sqlSnippet: string | null;
+  createdAt: string;
+};
+
+export type GlossaryInput = { term: string; aliases: string[]; definition: string; sqlSnippet: string | null };
 
 export type AssistantPayload = {
   pending?: boolean;
@@ -83,6 +156,12 @@ export type AssistantPayload = {
   error?: string;
   feedback?: "up" | "down";
   savedQueryId?: number | null;
+  timing?: Timing | null;
+  cached?: boolean;
+  confidence?: Confidence | null;
+  analyses?: Analysis[];
+  drivers?: Drivers[];
+  insights?: Insights;
 };
 
 export type ChatMessage = {
@@ -142,6 +221,8 @@ export type EvalRun = {
   dataset: string;
   status: "running" | "done" | "error";
   useMemory: boolean;
+  verify: boolean;
+  label: string | null;
   model: string;
   total: number;
   completed: number;
@@ -160,9 +241,42 @@ export type EvalResult = {
   steps: number;
   durationMs: number;
   error: string | null;
+  difficulty: string | null;
+  category: string | null;
+  failureType: string | null;
 };
 
-export type EvalRunDetail = EvalRun & { results: EvalResult[] };
+export type Bucket = { total: number; passed: number; accuracy: number };
+
+export type EvalBreakdown = {
+  byDifficulty: Record<string, Bucket>;
+  byCategory: Record<string, Bucket>;
+  failures: Record<string, number>;
+  avgSteps: number;
+  avgDurationMs: number;
+};
+
+export type EvalRunDetail = EvalRun & { results: EvalResult[]; breakdown: EvalBreakdown };
+
+export type EvalChange = "fixed" | "regressed" | "bothPass" | "bothFail" | "onlyA" | "onlyB";
+
+export type EvalCompare = {
+  a: EvalRun;
+  b: EvalRun;
+  items: {
+    question: string;
+    difficulty: string | null;
+    category: string | null;
+    change: EvalChange;
+    a: { passed: boolean; sql: string | null; failureType: string | null } | null;
+    b: { passed: boolean; sql: string | null; failureType: string | null } | null;
+  }[];
+  summary: Record<EvalChange, number>;
+  byDifficultyA: Record<string, Bucket>;
+  byDifficultyB: Record<string, Bucket>;
+};
+
+export type EvalStartOptions = { dataset: string; useMemory: boolean; verify: boolean; model?: string; label?: string };
 
 // --- HTTP helpers ----------------------------------------------------------------------------
 
@@ -224,6 +338,14 @@ export const api = {
     request<void>(`/api/conversations/${conversationId}`, { method: "DELETE" }),
   feedback: (messageId: number, verified: boolean) =>
     post<{ savedQueryId: number | null }>(`/api/messages/${messageId}/feedback`, { verified }),
+  insights: (messageId: number, refresh = false) =>
+    post<Insights>(`/api/messages/${messageId}/insights${refresh ? "?refresh=true" : ""}`),
+
+  glossary: (id: number) => request<GlossaryTerm[]>(`/api/connections/${id}/glossary`),
+  createTerm: (id: number, body: GlossaryInput) => post<GlossaryTerm>(`/api/connections/${id}/glossary`, body),
+  updateTerm: (termId: number, body: GlossaryInput) =>
+    request<GlossaryTerm>(`/api/glossary/${termId}`, { method: "PUT", body: JSON.stringify(body) }),
+  deleteTerm: (termId: number) => request<void>(`/api/glossary/${termId}`, { method: "DELETE" }),
 
   doctor: (id: number, sql: string, analyze: boolean) =>
     post<Diagnosis>(`/api/connections/${id}/doctor`, { sql, analyze }),
@@ -237,9 +359,10 @@ export const api = {
 
   evalDatasets: () => request<{ name: string; size: number }[]>("/api/evals/datasets"),
   evalRuns: (id: number) => request<EvalRun[]>(`/api/connections/${id}/evals`),
-  startEval: (id: number, dataset: string, useMemory: boolean) =>
-    post<EvalRun>(`/api/connections/${id}/evals`, { dataset, useMemory }),
+  startEval: (id: number, options: EvalStartOptions) => post<EvalRun>(`/api/connections/${id}/evals`, options),
   evalRun: (runId: number) => request<EvalRunDetail>(`/api/evals/${runId}`),
+  compareEvals: (id: number, a: number, b: number) =>
+    request<EvalCompare>(`/api/connections/${id}/evals/compare?a=${a}&b=${b}`),
 };
 
 // --- Chat streaming (SSE over POST) ----------------------------------------------------------
@@ -252,7 +375,21 @@ export type ChatEventHandlers = {
   onStep?: (d: AgentStep) => void;
   onStepResult?: (d: AgentStep) => void;
   onResult?: (d: QueryResult) => void;
-  onAnswer?: (d: { sql: string; explanation: string; chart: ChartSpec; steps: AgentStep[]; attempts: number }) => void;
+  onAnalysis?: (d: Analysis) => void;
+  onDrivers?: (d: Drivers) => void;
+  onConfidence?: (d: Confidence) => void;
+  onAnswer?: (d: {
+    sql: string;
+    explanation: string;
+    chart: ChartSpec;
+    steps: AgentStep[];
+    attempts: number;
+    timing?: Timing;
+    cached?: boolean;
+    confidence?: Confidence | null;
+    analyses?: Analysis[];
+    drivers?: Drivers[];
+  }) => void;
   onError?: (d: { message: string }) => void;
   onDone?: (d: { messageId: number }) => void;
 };
@@ -265,6 +402,9 @@ const HANDLER_FOR: Record<string, keyof ChatEventHandlers> = {
   step: "onStep",
   step_result: "onStepResult",
   result: "onResult",
+  analysis: "onAnalysis",
+  drivers: "onDrivers",
+  confidence: "onConfidence",
   answer: "onAnswer",
   error: "onError",
   done: "onDone",
@@ -276,14 +416,15 @@ export async function streamChat(
   question: string,
   conversationId: number | null,
   handlers: ChatEventHandlers,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  verify?: boolean
 ): Promise<void> {
   let res: Response;
   try {
     res = await fetch(`${API_URL}/api/connections/${connectionId}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, conversationId }),
+      body: JSON.stringify({ question, conversationId, verify }),
       signal,
     });
   } catch (err) {

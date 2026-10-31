@@ -8,7 +8,6 @@ of (normalised) values. That ignores column names/order, row order and extra col
 import json
 import logging
 import time
-from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +19,8 @@ from app.llm import describe_llm
 from app.models import Connection, EvalResult, EvalRun
 from app.services import crypto, target
 from app.services.agent import run_agent
+from app.services.compare import results_match
+from app.services.sql_guard import SqlGuardError
 
 logger = logging.getLogger(__name__)
 
@@ -42,46 +43,29 @@ def load_dataset(name: str) -> list[dict[str, str]]:
     return json.loads(path.read_text())
 
 
-def _norm(value: Any) -> Any:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return round(float(value), 2)
-    if isinstance(value, str):
-        stripped = value.strip()
-        try:
-            return round(float(stripped), 2)
-        except ValueError:
-            return stripped.lower()
-    return str(value)
+def _db_error(exc: Exception) -> str:
+    return str(getattr(exc, "pgerror", None) or exc).strip()
 
 
-def results_match(gold: target.QueryResult, predicted: target.QueryResult) -> bool:
-    if gold.row_count != predicted.row_count:
-        return False
-    predicted_cols = [
-        Counter(_norm(row[i]) for row in predicted.rows) for i in range(len(predicted.columns))
-    ]
-    used: set[int] = set()
-    for gi in range(len(gold.columns)):
-        gold_col = Counter(_norm(row[gi]) for row in gold.rows)
-        match = next(
-            (pi for pi, col in enumerate(predicted_cols) if pi not in used and col == gold_col), None
-        )
-        if match is None:
-            return False
-        used.add(match)
-    return True
-
-
-def _evaluate_one(db: Session, connection: Connection, url: str, item: dict[str, str], use_memory: bool) -> EvalResult:
+def _evaluate_one(
+    db: Session,
+    connection: Connection,
+    url: str,
+    item: dict[str, str],
+    use_memory: bool,
+    verify: bool = False,
+    model: str | None = None,
+) -> EvalResult:
     started = time.perf_counter()
     predicted_sql: str | None = None
     steps = 0
     error: str | None = None
-    for event in run_agent(db, connection, item["question"], use_memory=use_memory, source="eval"):
+    failure: str | None = None
+    # use_cache=False: a cached replay would measure the cache, not the agent.
+    for event in run_agent(
+        db, connection, item["question"], use_memory=use_memory, source="eval",
+        verify=verify, model=model, use_cache=False,
+    ):
         if event.event == "answer":
             predicted_sql = event.data.get("sql") or None
             steps = len(event.data.get("steps", []))
@@ -93,12 +77,22 @@ def _evaluate_one(db: Session, connection: Connection, url: str, item: dict[str,
     if predicted_sql:
         try:
             gold = target.run_select(url, item["gold_sql"], max_rows=settings.max_result_rows)
-            predicted = target.run_select(url, predicted_sql, max_rows=settings.max_result_rows)
-            passed = results_match(gold, predicted)
         except Exception as exc:  # noqa: BLE001
-            error = str(exc).strip()
+            error, failure = f"Gold SQL failed: {_db_error(exc)}", "gold_error"
+        else:
+            try:
+                predicted = target.run_select(url, predicted_sql, max_rows=settings.max_result_rows)
+                passed = results_match(gold, predicted)
+                if not passed:
+                    failure = "wrong_result"
+            except SqlGuardError as exc:
+                error, failure = str(exc), "blocked"
+            except Exception as exc:  # noqa: BLE001
+                error, failure = _db_error(exc), "sql_error"
     elif error is None:
-        error = "No SQL produced."
+        error, failure = "No SQL produced.", "no_sql"
+    else:
+        failure = "agent_error"
 
     return EvalResult(
         question=item["question"],
@@ -108,16 +102,30 @@ def _evaluate_one(db: Session, connection: Connection, url: str, item: dict[str,
         steps=steps,
         duration_ms=int((time.perf_counter() - started) * 1000),
         error=error,
+        difficulty=item.get("difficulty"),
+        category=item.get("category"),
+        failure_type=None if passed else failure,
     )
 
 
-def create_run(db: Session, connection_id: int, dataset: str, use_memory: bool) -> EvalRun:
+def create_run(
+    db: Session,
+    connection_id: int,
+    dataset: str,
+    use_memory: bool,
+    verify: bool = False,
+    model: str | None = None,
+    label: str | None = None,
+) -> EvalRun:
     items = load_dataset(dataset)
+    llm = describe_llm()
     run = EvalRun(
         connection_id=connection_id,
         dataset=dataset,
         use_memory=use_memory,
-        model=f"{describe_llm()['provider']}:{describe_llm()['model']}",
+        verify=verify,
+        model=f"{llm['provider']}:{model or llm['model']}",
+        label=(label or "").strip() or None,
         total=len(items),
     )
     db.add(run)
@@ -141,7 +149,9 @@ def execute_run(run_id: int, pace_seconds: float = DEFAULT_PACE_SECONDS) -> None
             for i, item in enumerate(items):
                 if i:
                     time.sleep(pace_seconds)
-                result = _evaluate_one(db, connection, url, item, run.use_memory)
+                result = _evaluate_one(
+                    db, connection, url, item, run.use_memory, run.verify, run.model.split(":", 1)[-1]
+                )
                 result.run_id = run.id
                 db.add(result)
                 run.completed += 1
